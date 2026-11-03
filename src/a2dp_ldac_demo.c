@@ -88,6 +88,7 @@ static const char *g_eqmid_name = "HQ";
 static int  g_gain_pct = 12;   // test-tone level, % of full scale (it is only a tone)
 static int  g_source_system = 0;   // 1 = WASAPI loopback capture, 0 = test tone
 static int  g_endpoint_index = -1; // -1 = default render endpoint
+static char g_endpoint_name[128]; // non-empty: match endpoint by name
 static int  g_abr_enabled = 0;
 static HANDLE_LDAC_ABR g_abr_handle = NULL;
 
@@ -1410,7 +1411,15 @@ int btstack_main(int argc, const char * argv[]){
         } else if (!strcmp(argv[i], "--mode") && i + 1 < argc){
             ldac_apply_mode(argv[++i]);
         } else if (!strcmp(argv[i], "--endpoint") && i + 1 < argc){
-            g_endpoint_index = atoi(argv[++i]);
+            const char *ep = argv[++i];
+            const char *q = ep;
+            while (*q >= '0' && *q <= '9') q++;
+            if (*ep && *q == 0) {
+                g_endpoint_index = atoi(ep);      // all digits -> index
+            } else {
+                strncpy(g_endpoint_name, ep, sizeof(g_endpoint_name) - 1);
+                g_endpoint_name[sizeof(g_endpoint_name) - 1] = 0;
+            }
         } else if (!strcmp(argv[i], "--list-endpoints")){
             wa_capture_list();
             exit(0);
@@ -1425,7 +1434,7 @@ int btstack_main(int argc, const char * argv[]){
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")){
             printf("Usage: a2dp_source_demo [--addr AA:BB:CC:DD:EE:FF] [--mode HQ|SQ|MQ] [--gain 0-100] [--source tone|system]\n");
             printf("  --source  tone = generated sine (default), system = WASAPI loopback\n");
-            printf("  --endpoint N  render endpoint to capture (see --list-endpoints)\n");
+            printf("  --endpoint N|name  render endpoint: index or name substring (e.g. \"LG TV\")\n");
             printf("  --gain  test-tone level in percent (default 12)\n");
             printf("  env: LDAC_ADDR, LDAC_MODE, LDAC_GAIN, LDAC_SOURCE\n");
             exit(0);
@@ -1441,7 +1450,10 @@ int btstack_main(int argc, const char * argv[]){
     if (e_gain && *e_gain){ int g = atoi(e_gain); g_gain_pct = (g < 0) ? 0 : (g > 100 ? 100 : g); }
     
     if (g_source_system){
-        if (wa_capture_start_ex(g_endpoint_index) == 0) printf("AUDIO: capturing system audio (WASAPI loopback, endpoint %d)\n", g_endpoint_index);
+        int cap = g_endpoint_name[0] ? wa_capture_start_named(g_endpoint_name)
+                                     : wa_capture_start_ex(g_endpoint_index);
+        if (cap == 0) printf("AUDIO: capturing system audio (WASAPI loopback, %s)\n",
+                             g_endpoint_name[0] ? g_endpoint_name : "default endpoint");
         else { printf("AUDIO: capture failed, falling back to test tone\n"); g_source_system = 0; }
     }
 

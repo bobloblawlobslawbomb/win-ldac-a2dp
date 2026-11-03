@@ -32,7 +32,7 @@ Verified end-to-end on an Intel AX201 against Sony WH-1000XM4, **990 kbps, stabl
 
 **Endpoints matter.** Windows renders audio to one *endpoint* at a time — one of
 several output devices. Capture must open the same one your music plays to, or it
-records silence. `--list-endpoints` shows them; `--endpoint N` picks one. Note that
+records silence. `--list-endpoints` shows them; `--endpoint N` (or `--endpoint "LG TV"`) picks one. Note that
 a default endpoint can be a virtual/HDMI device that renders nothing at all.
 
 ## How it works
@@ -62,7 +62,7 @@ WinUSB, BTstack owns the HCI/L2CAP/AVDTP layers, and libldac does the encoding.
 For **system audio** rather than the test tone:
 
 ```powershell
-.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system --endpoint 3
+.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system --endpoint "LG TV"
 ```
 
 List the candidates first with `--list-endpoints`. The endpoint must be the device

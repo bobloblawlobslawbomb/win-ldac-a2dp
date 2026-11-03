@@ -20,6 +20,9 @@ int wa_capture_start(void);
 /* Same, but for a specific render endpoint (index from wa_capture_list()). */
 int wa_capture_start_ex(int endpoint_index);
 
+/* Same, but matches a substring of the endpoint's friendly name (e.g. "LG TV"). */
+int wa_capture_start_named(const char *name_substring);
+
 /* Prints active render endpoints as "[i] name" and returns how many. */
 int wa_capture_list(void);
 

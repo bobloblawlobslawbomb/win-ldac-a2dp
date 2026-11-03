@@ -60,6 +60,7 @@ static unsigned int     wa_src_channels;
 
 /* --- resampler state (producer side only) ------------------------------- */
 static int              wa_endpoint_index = -1;  /* -1 = default render endpoint */
+static char             wa_endpoint_match[128];  /* non-empty: match by name instead */
 static wchar_t          wa_endpoint_name[256] = L"(unknown)";
 static int              wa_fmt_channels = 2;    /* decided at open time */
 static int              wa_fmt_bits     = 16;
@@ -264,8 +265,52 @@ int wa_capture_list(void)
     return printed;
 }
 
+static int name_matches(const char *haystack, const char *needle)
+{
+    size_t nl = strlen(needle), hl = strlen(haystack), i, j;
+    if (nl == 0 || nl > hl) return 0;
+    for (i = 0; i + nl <= hl; i++) {
+        for (j = 0; j < nl; j++) {
+            char a = haystack[i + j], b = needle[j];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) break;
+        }
+        if (j == nl) return 1;
+    }
+    return 0;
+}
+
 static HRESULT select_device(IMMDeviceEnumerator *enumerator, IMMDevice **device_out)
 {
+    if (wa_endpoint_match[0]) {
+        /* select by (case-insensitive) substring of the friendly name */
+        IMMDeviceCollection *collection = NULL;
+        UINT32 count = 0, i;
+        HRESULT hr = IMMDeviceEnumerator_EnumAudioEndpoints(enumerator, eRender,
+                                                            DEVICE_STATE_ACTIVE, &collection);
+        if (FAILED(hr) || !collection) return hr;
+        IMMDeviceCollection_GetCount(collection, &count);
+        for (i = 0; i < count; i++) {
+            IMMDevice *dev = NULL;
+            if (SUCCEEDED(IMMDeviceCollection_Item(collection, i, &dev)) && dev) {
+                wchar_t wname[256];
+                char    aname[256];
+                int k = 0;
+                device_name(dev, wname, sizeof(wname) / sizeof(wname[0]));
+                while (wname[k] && k < (int)sizeof(aname) - 1) { aname[k] = (char)wname[k]; k++; }
+                aname[k] = 0;
+                if (name_matches(aname, wa_endpoint_match)) {
+                    *device_out = dev;
+                    IMMDeviceCollection_Release(collection);
+                    return S_OK;
+                }
+                IMMDevice_Release(dev);
+            }
+        }
+        IMMDeviceCollection_Release(collection);
+        return E_NOTFOUND;
+    }
     if (wa_endpoint_index < 0) {
         return IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, eRender, eConsole, device_out);
     } else {
@@ -516,6 +561,16 @@ done:
 int wa_capture_start_ex(int endpoint_index)
 {
     wa_endpoint_index = endpoint_index;
+    wa_endpoint_match[0] = 0;
+    return wa_capture_start();
+}
+
+int wa_capture_start_named(const char *name_substring)
+{
+    if (!name_substring || !*name_substring) return wa_capture_start_ex(-1);
+    strncpy(wa_endpoint_match, name_substring, sizeof(wa_endpoint_match) - 1);
+    wa_endpoint_match[sizeof(wa_endpoint_match) - 1] = 0;
+    wa_endpoint_index = -2;   /* "match by name" */
     return wa_capture_start();
 }
 
