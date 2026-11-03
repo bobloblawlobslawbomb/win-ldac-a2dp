@@ -47,8 +47,9 @@ WinUSB, BTstack owns the HCI/L2CAP/AVDTP layers, and libldac does the encoding.
 
 ## Quick start
 
-1. **Claim the radio.** Install [Zadig](https://zadig.akeo.ie/), enable *List All
-   Devices*, select your Bluetooth radio, choose **WinUSB**, click *Install Driver*.
+1. **Claim the radio.** Run `scripts\setup.ps1` (generates a WinUSB INF and installs
+   it with `pnputil`; untested), or use [Zadig](https://zadig.akeo.ie/) — *Options →
+   List All Devices → WinUSB → Install Driver* — which is the known-good route.
    ⚠️ This disables normal Windows Bluetooth until you undo it — see
    [docs/SETUP.md](docs/SETUP.md#restoring-windows-bluetooth).
 2. **Pair.** Put the headphones in pairing mode.

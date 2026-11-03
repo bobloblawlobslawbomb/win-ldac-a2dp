@@ -105,3 +105,66 @@ tshark -r hci_dump.pklg -Y 'bthci_acl' -T fields -e frame.time_relative
 
 If a future change reintroduces a rate cap, measure packets/s **and** the audio clock's
 owed-frame backlog (`owed`) before theorising about the radio.
+
+## 10. WASAPI float32 is ±1.0, not int16 scale
+
+**Symptom:** capture ran, delivered real frames at real-time, and every sample was
+zero. All five render endpoints on the test machine looked "silent", which invited a
+hardware explanation — wrong.
+
+WASAPI shared-mode mixes are almost always `WAVE_FORMAT_IEEE_FLOAT` 32-bit, whose
+samples are nominal ±1.0. The conversion path passed those straight into a clipper
+expecting int16 scale (`±32768`), so everything truncated to `0`.
+
+**Fix:** scale float samples by 32768 before clipping. **Lesson:** when capture
+returns zeros, unit-test the conversion with synthetic input *before* suspecting the
+device — a three-line feed test proved it in seconds after an hour of endpoint
+theorising.
+
+## 11. Test capture without depending on what is playing
+
+`wa_test.exe` gained a `selftest <endpoint>` mode that renders a tone into an
+endpoint and captures it back in loopback. That single tool separates:
+
+- capture broken → `no audio captured`
+- nothing playing → `no audio captured` (but `selftest` says `LOOPBACK WORKS`)
+
+Never debug loopback against "whatever the user happens to be playing"; render your
+own known signal on the same endpoint.
+
+## 12. Endpoints: shared mode forces the device's format, and virtual devices lie
+
+- In shared mode `IAudioClient::Initialize` only accepts the endpoint's **mix format**;
+  anything else fails. Read it with `GetMixFormat` and convert (rate, channel count,
+  float/int). Endpoints commonly run 48 kHz or 192 kHz float32.
+- Loopback on a **virtual or disconnected** endpoint (Steam Streaming, Oculus, an HDMI
+  sink with the TV off) returns digital silence even though capture "works". A default
+  endpoint can be one of these, so capturing "the default" is not the same as
+  capturing "what the user hears".
+- The reliable way to pick is `IAudioSessionManager2` → session enumerator → any
+  session in `AudioSessionStateActive`. Verified: with a tone playing on the HDMI
+  endpoint, the tool selected `LG TV SSCR2 (192000 Hz)` with no endpoint argument.
+- Re-evaluate after a few seconds of silence, otherwise a device switch leaves you
+  capturing a dead endpoint forever.
+
+## 13. `ldac_ABR_Proc` needs the initialised handle, not a fresh one
+
+Calling `ldac_ABR_get_handle()` inline per packet and passing the result to
+`ldac_ABR_Proc` produced an immediate `0xc0000005` on the first send — the handle is
+uninitialised. Store the handle created at `ldac_ABR_Init` time and reuse it.
+
+## 14. Console children die with their console
+
+`Start-Process` from a remote PowerShell session exits the child as soon as the
+parent's console is torn down, which looks exactly like a crash and logs nothing.
+Launch long-running test processes with WMI instead:
+
+```powershell
+Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="cmd.exe /c `"$bat`""}
+```
+
+## 15. Audio sinks sleep
+
+A paired headset that idles goes unreachable (`0x04 PAGE_TIMEOUT`) and every test then
+fails for a reason unrelated to the code. Wake it before each run; a single press of
+the power button reconnects without re-pairing.

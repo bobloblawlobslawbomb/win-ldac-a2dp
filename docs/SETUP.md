@@ -25,6 +25,18 @@ Note the `InstanceId` of the radio you intend to claim, e.g.
 
 ## 2. Claim it for WinUSB
 
+**Option A — scripted (no Zadig):**
+
+```powershell
+.\scripts\setup.ps1
+```
+
+It lists the radios, generates a WinUSB INF for the one you pick and installs it with
+`pnputil`. ⚠️ This script is **untested** — it was written without a machine to verify
+against. If Windows refuses the unsigned INF, fall back to Option B.
+
+**Option B — Zadig (known to work):**
+
 1. Download [Zadig](https://zadig.akeo.ie/) and run it as Administrator.
 2. **Options → List All Devices.**
 3. Pick the radio from the dropdown (it shows the USB VID/PID, not a friendly name).
@@ -104,6 +116,15 @@ Env equivalents `LDAC_ADDR` / `LDAC_MODE` / `LDAC_SOURCE` / `LDAC_GAIN`. Stop wi
 **Quality guidance:** HQ runs close to the link's limit; refusals are absorbed by a
 hold-and-retry buffer rather than dropped, but on a congested 2.4 GHz band `--mode SQ`
 is more robust and still well above SBC.
+
+## Optional: start at logon
+
+```powershell
+.\scripts\install-autostart.ps1 -Addr AC:80:0A:F2:C5:A2 -Mode HQ
+.\scripts\install-autostart.ps1 -Remove      # undo
+```
+
+Keep the executable in a fixed folder: the link key lives beside it.
 
 ## Restoring Windows Bluetooth
 
