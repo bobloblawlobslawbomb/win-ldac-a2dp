@@ -25,7 +25,8 @@ Verified end-to-end on an Intel AX201 against Sony WH-1000XM4, **990 kbps, stabl
 | Pairing (SSP), link-key persistence, AVRCP volume | working |
 | Configurable target / quality (`--addr`, `--mode`) | working |
 | **System audio capture (WASAPI loopback)** | **working, verified** |
-| Endpoint selection (`--list-endpoints`, `--endpoint N`) | working |
+| Endpoint auto-follow, or pick by name/index | working |
+| Device scan (`--scan`) | working |
 | Adaptive bitrate (HQ→SQ→MQ under congestion) | working |
 | Test tone (diagnostic source) | working |
 | Installer / auto-start | not yet |
@@ -59,15 +60,15 @@ WinUSB, BTstack owns the HCI/L2CAP/AVDTP layers, and libldac does the encoding.
 
 4. Accept the pairing prompt on the headphones. Audio starts once AVDTP connects.
 
-For **system audio** rather than the test tone:
+For **system audio** rather than the test tone, just play something and run:
 
 ```powershell
-.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system --endpoint "LG TV"
+.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system
 ```
 
-List the candidates first with `--list-endpoints`. The endpoint must be the device
-your music actually plays to — capturing a different one yields silence, and a
-virtual/HDMI default endpoint may render nothing at all.
+It picks the endpoint that currently has an active audio session, and follows it if
+you switch devices. `--endpoint "LG TV"` (name) or `--endpoint N` (index) override
+that; `--list-endpoints` shows the candidates.
 
 Environment equivalents: `LDAC_ADDR`, `LDAC_MODE`, `LDAC_SOURCE`, `LDAC_GAIN`.
 

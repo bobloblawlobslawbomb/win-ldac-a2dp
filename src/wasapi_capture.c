@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <audiopolicy.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wchar.h>
 #include <stdio.h>
@@ -61,7 +62,9 @@ static unsigned int     wa_src_channels;
 /* --- resampler state (producer side only) ------------------------------- */
 static int              wa_endpoint_index = -1;  /* -1 = default render endpoint */
 static char             wa_endpoint_match[128];  /* non-empty: match by name instead */
+static int              wa_auto = 0;             /* follow whichever endpoint is playing */
 static wchar_t          wa_endpoint_name[256] = L"(unknown)";
+static int              find_active_endpoint(void); /* fwd: used by open_capture */
 static int              wa_fmt_channels = 2;    /* decided at open time */
 static int              wa_fmt_bits     = 16;
 static int              wa_fmt_float    = 0;
@@ -342,6 +345,10 @@ static int open_capture(IAudioClient **client_out, IAudioCaptureClient **cap_out
                           &guid_immdevice_enum, (void **)&enumerator);
     if (FAILED(hr) || !enumerator) { fprintf(stderr, "WA: no device enumerator (0x%08lx)\n", (unsigned long)hr); goto done; }
 
+    if (wa_auto) {
+        int live = find_active_endpoint();
+        if (live >= 0) wa_endpoint_index = live;
+    }
     hr = select_device(enumerator, &device);
     if (FAILED(hr) || !device) { fprintf(stderr, "WA: cannot open render endpoint %d (0x%08lx)\n", wa_endpoint_index, (unsigned long)hr); goto done; }
     device_name(device, wa_endpoint_name, sizeof(wa_endpoint_name) / sizeof(wa_endpoint_name[0]));
@@ -424,8 +431,30 @@ static DWORD WINAPI capture_thread(LPVOID param)
     InterlockedExchange(&wa_ready, 1);
     SetEvent(wa_started_evt);
 
+    DWORD last_probe = GetTickCount();
+    LONG  peak_probe = 0;
+
     while (!wa_stop) {
         UINT32 packet = 0;
+
+        /* Silence for a whole probe interval means we may be listening to the
+           wrong device: follow whichever endpoint has an active session. */
+        if (wa_auto && (GetTickCount() - last_probe) > 5000UL) {
+            if (wa_peaksample == peak_probe) {
+                int live = find_active_endpoint();
+                if (live >= 0 && live != wa_endpoint_index) {
+                    fprintf(stderr, "WA: silent - switching endpoint %d -> %d\n", wa_endpoint_index, live);
+                    IAudioClient_Stop(client);
+                    IAudioCaptureClient_Release(capture);
+                    IAudioClient_Release(client);
+                    capture = NULL; client = NULL;
+                    wa_endpoint_index = live;
+                    if (open_capture(&client, &capture) != 0) break;
+                }
+            }
+            last_probe = GetTickCount();
+            peak_probe = wa_peaksample;
+        }
         if (FAILED(IAudioCaptureClient_GetNextPacketSize(capture, &packet))) break;
         if (packet == 0) { Sleep(4); continue; }
 
@@ -462,6 +491,66 @@ static DWORD WINAPI capture_thread(LPVOID param)
     return 0;
 }
 
+
+/* ------------------------------------------------------------------------ */
+/* which endpoint is actually playing?                                       */
+/* ------------------------------------------------------------------------ */
+static const GUID guid_iaudiosessionmanager2 =
+    {0x77AA99A0,0x1BD6,0x484F,{0x8B,0xC7,0x2C,0x65,0x4C,0x9A,0x9B,0x6F}};  /* IID_IAudioSessionManager2 */
+
+static int endpoint_has_active_session(IMMDevice *dev)
+{
+    IAudioSessionManager2    *mgr = NULL;
+    IAudioSessionEnumerator  *sessions = NULL;
+    int count = 0, i, active = 0;
+
+    if (FAILED(IMMDevice_Activate(dev, &guid_iaudiosessionmanager2, CLSCTX_ALL, NULL, (void **)&mgr)) || !mgr)
+        return 0;
+    if (SUCCEEDED(IAudioSessionManager2_GetSessionEnumerator(mgr, &sessions)) && sessions) {
+        if (SUCCEEDED(IAudioSessionEnumerator_GetCount(sessions, &count))) {
+            for (i = 0; i < count; i++) {
+                IAudioSessionControl *ctl = NULL;
+                if (SUCCEEDED(IAudioSessionEnumerator_GetSession(sessions, i, &ctl)) && ctl) {
+                    AudioSessionState state;
+                    if (SUCCEEDED(IAudioSessionControl_GetState(ctl, &state)) && state == AudioSessionStateActive)
+                        active = 1;
+                    IAudioSessionControl_Release(ctl);
+                }
+                if (active) break;
+            }
+        }
+        IAudioSessionEnumerator_Release(sessions);
+    }
+    IAudioSessionManager2_Release(mgr);
+    return active;
+}
+
+/* Index of the first render endpoint with an active session, else -1. */
+static int find_active_endpoint(void)
+{
+    IMMDeviceEnumerator *enumerator = NULL;
+    IMMDeviceCollection *collection = NULL;
+    UINT32 count = 0, i;
+    int found = -1;
+
+    if (FAILED(CoCreateInstance(&guid_mmdevice_enum, NULL, CLSCTX_ALL,
+                                &guid_immdevice_enum, (void **)&enumerator)) || !enumerator)
+        return -1;
+    if (SUCCEEDED(IMMDeviceEnumerator_EnumAudioEndpoints(enumerator, eRender,
+                                                         DEVICE_STATE_ACTIVE, &collection)) && collection) {
+        IMMDeviceCollection_GetCount(collection, &count);
+        for (i = 0; i < count; i++) {
+            IMMDevice *dev = NULL;
+            if (SUCCEEDED(IMMDeviceCollection_Item(collection, i, &dev)) && dev) {
+                if (endpoint_has_active_session(dev)) { found = (int)i; IMMDevice_Release(dev); break; }
+                IMMDevice_Release(dev);
+            }
+        }
+        IMMDeviceCollection_Release(collection);
+    }
+    IMMDeviceEnumerator_Release(enumerator);
+    return found;
+}
 
 /* ------------------------------------------------------------------------ */
 /* render helper (used by the self-test and by --selftest)                   */
@@ -562,6 +651,15 @@ int wa_capture_start_ex(int endpoint_index)
 {
     wa_endpoint_index = endpoint_index;
     wa_endpoint_match[0] = 0;
+    wa_auto = 0;
+    return wa_capture_start();
+}
+
+int wa_capture_start_auto(void)
+{
+    wa_auto = 1;
+    wa_endpoint_match[0] = 0;
+    wa_endpoint_index = -1;
     return wa_capture_start();
 }
 
@@ -570,6 +668,7 @@ int wa_capture_start_named(const char *name_substring)
     if (!name_substring || !*name_substring) return wa_capture_start_ex(-1);
     strncpy(wa_endpoint_match, name_substring, sizeof(wa_endpoint_match) - 1);
     wa_endpoint_match[sizeof(wa_endpoint_match) - 1] = 0;
+    wa_auto = 0;
     wa_endpoint_index = -2;   /* "match by name" */
     return wa_capture_start();
 }

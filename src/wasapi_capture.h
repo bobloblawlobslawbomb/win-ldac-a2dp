@@ -23,6 +23,10 @@ int wa_capture_start_ex(int endpoint_index);
 /* Same, but matches a substring of the endpoint's friendly name (e.g. "LG TV"). */
 int wa_capture_start_named(const char *name_substring);
 
+/* Captures whichever render endpoint currently has an active audio session,
+ * following it if it changes. Falls back to the default endpoint. */
+int wa_capture_start_auto(void);
+
 /* Prints active render endpoints as "[i] name" and returns how many. */
 int wa_capture_list(void);
 

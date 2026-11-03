@@ -67,7 +67,8 @@ LDAC: encoder initialised, 990 kbps (HQ), target AC:80:0A:F2:C5:A2
 | `--addr` | Target BD address (default: the XM4 used during development) |
 | `--mode` | `HQ` 990 kbps / `SQ` 660 / `MQ` 330 (default `HQ`) |
 | `--source` | `tone` (default, generated sine) or `system` (WASAPI loopback) |
-| `--endpoint N` or `--endpoint "name"` | render endpoint by index **or** name substring (default: system default) |
+| `--endpoint auto\|N\|"name"` | auto (default): follow the endpoint with an active session; or force one by index/name |
+| `--scan` | list nearby Bluetooth devices, then exit |
 | `--list-endpoints` | prints active render endpoints as `[n] name`, then exits |
 | `--gain 0-100` | test-tone level in percent (default 12) — irrelevant for `system` |
 | `--help` | Usage |

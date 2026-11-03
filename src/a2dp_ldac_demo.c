@@ -89,6 +89,8 @@ static int  g_gain_pct = 12;   // test-tone level, % of full scale (it is only a
 static int  g_source_system = 0;   // 1 = WASAPI loopback capture, 0 = test tone
 static int  g_endpoint_index = -1; // -1 = default render endpoint
 static char g_endpoint_name[128]; // non-empty: match endpoint by name
+static int  g_endpoint_auto = 0;  // follow whichever endpoint is playing
+static int  g_scan_mode = 0;      // --scan: list nearby devices, then exit
 static int  g_abr_enabled = 0;
 static HANDLE_LDAC_ABR g_abr_handle = NULL;
 
@@ -765,6 +767,12 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
                             }
                         }
                     }
+                    if (g_scan_mode){
+                        printf("SCAN: starting inquiry (about 10 s)...\n");
+                        scan_active = false;
+                        gap_inquiry_start(A2DP_SOURCE_DEMO_INQUIRY_DURATION_1280MS);
+                        break;
+                    }
                     if (sscanf_bd_addr(g_target_addr, device_addr) > 0){
                         printf("AUTO: connecting to %s\n", bd_addr_to_str(device_addr));
                         uint8_t st = a2dp_source_establish_stream(device_addr, &media_tracker.a2dp_cid);
@@ -836,7 +844,7 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
                 printf(", name '%s'", name_buffer);
             }
             printf("\n");
-            if ((cod & bluetooth_speaker_cod) == bluetooth_speaker_cod){
+            if (!g_scan_mode && (cod & bluetooth_speaker_cod) == bluetooth_speaker_cod){
                 memcpy(device_addr, address, 6);
                 printf("Bluetooth speaker detected, trying to connect to %s...\n", bd_addr_to_str(device_addr));
                 scan_active = false;
@@ -845,6 +853,11 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *p
             }
             break;
         case GAP_EVENT_INQUIRY_COMPLETE:
+            if (g_scan_mode){
+                printf("\nPick one of the addresses above and run with --addr AA:BB:CC:DD:EE:FF\n");
+                fflush(stdout);
+                exit(0);
+            }
             if (scan_active){
                 printf("No Bluetooth speakers found, scanning again...\n");
                 gap_inquiry_start(A2DP_SOURCE_DEMO_INQUIRY_DURATION_1280MS);
@@ -1410,11 +1423,15 @@ int btstack_main(int argc, const char * argv[]){
             g_target_addr[sizeof(g_target_addr) - 1] = 0;
         } else if (!strcmp(argv[i], "--mode") && i + 1 < argc){
             ldac_apply_mode(argv[++i]);
+        } else if (!strcmp(argv[i], "--scan")){
+            g_scan_mode = 1;
         } else if (!strcmp(argv[i], "--endpoint") && i + 1 < argc){
             const char *ep = argv[++i];
             const char *q = ep;
             while (*q >= '0' && *q <= '9') q++;
-            if (*ep && *q == 0) {
+            if (!strcasecmp(ep, "auto")) {
+                g_endpoint_auto = 1;
+            } else if (*ep && *q == 0) {
                 g_endpoint_index = atoi(ep);      // all digits -> index
             } else {
                 strncpy(g_endpoint_name, ep, sizeof(g_endpoint_name) - 1);
@@ -1434,7 +1451,8 @@ int btstack_main(int argc, const char * argv[]){
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")){
             printf("Usage: a2dp_source_demo [--addr AA:BB:CC:DD:EE:FF] [--mode HQ|SQ|MQ] [--gain 0-100] [--source tone|system]\n");
             printf("  --source  tone = generated sine (default), system = WASAPI loopback\n");
-            printf("  --endpoint N|name  render endpoint: index or name substring (e.g. \"LG TV\")\n");
+            printf("  --endpoint N|name|auto  render endpoint: index, name substring, or auto (default)\n");
+            printf("  --scan    list nearby Bluetooth devices, then exit\n");
             printf("  --gain  test-tone level in percent (default 12)\n");
             printf("  env: LDAC_ADDR, LDAC_MODE, LDAC_GAIN, LDAC_SOURCE\n");
             exit(0);
@@ -1450,11 +1468,19 @@ int btstack_main(int argc, const char * argv[]){
     if (e_gain && *e_gain){ int g = atoi(e_gain); g_gain_pct = (g < 0) ? 0 : (g > 100 ? 100 : g); }
     
     if (g_source_system){
-        int cap = g_endpoint_name[0] ? wa_capture_start_named(g_endpoint_name)
-                                     : wa_capture_start_ex(g_endpoint_index);
-        if (cap == 0) printf("AUDIO: capturing system audio (WASAPI loopback, %s)\n",
-                             g_endpoint_name[0] ? g_endpoint_name : "default endpoint");
-        else { printf("AUDIO: capture failed, falling back to test tone\n"); g_source_system = 0; }
+        int cap;
+        if (g_endpoint_name[0])          cap = wa_capture_start_named(g_endpoint_name);
+        else if (g_endpoint_index >= 0)  cap = wa_capture_start_ex(g_endpoint_index);
+        else                            cap = wa_capture_start_auto();   // follow the audio
+        if (cap == 0) {
+            unsigned int du, dc, dr, dch, ds, dp;
+            char ep_name[128] = "(unknown)";
+            wa_capture_stats(&du, &dc, &dr, &dch, &ds, &dp, ep_name, sizeof(ep_name));
+            printf("AUDIO: capturing system audio from '%s' (%u Hz) via WASAPI loopback\n", ep_name, dr);
+        } else {
+            printf("AUDIO: capture failed, falling back to test tone\n");
+            g_source_system = 0;
+        }
     }
 
     int err = a2dp_source_and_avrcp_services_init();
