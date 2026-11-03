@@ -51,8 +51,9 @@ int main(int argc, char **argv)
         /* Render a quiet tone to an endpoint: used to feed the LDAC pipeline. */
         int ep = (argc > 2) ? atoi(argv[2]) : -1;
         int secs = (argc > 3) ? atoi(argv[3]) : 10;
-        printf("playing %d s tone to endpoint %d\n", secs, ep);
-        return wa_render_tone(ep, secs, 440.0, 0.02);
+        double amp = (argc > 4) ? atof(argv[4]) : 0.02;
+        printf("playing %d s tone to endpoint %d at %.0f%%\n", secs, ep, amp * 100.0);
+        return wa_render_tone(ep, secs, 440.0, amp);
     }
 
     if (argc > 1 && !strcmp(argv[1], "conv")) {

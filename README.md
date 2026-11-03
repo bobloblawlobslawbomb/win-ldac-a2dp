@@ -24,13 +24,16 @@ Verified end-to-end on an Intel AX201 against Sony WH-1000XM4, **990 kbps, stabl
 | LDAC HQ/SQ/MQ streaming | **working, verified** |
 | Pairing (SSP), link-key persistence, AVRCP volume | working |
 | Configurable target / quality (`--addr`, `--mode`) | working |
-| **Audio source** | **test tone (v0.1)** |
-| System-audio capture (WASAPI loopback) | **next milestone** |
+| **System audio capture (WASAPI loopback)** | **working, verified** |
+| Endpoint selection (`--list-endpoints`, `--endpoint N`) | working |
+| Adaptive bitrate (HQ→SQ→MQ under congestion) | working |
+| Test tone (diagnostic source) | working |
 | Installer / auto-start | not yet |
 
-**Read that honestly:** v0.1 proves the hard part — that a signed-kernel-driver-free
-LDAC path is possible on Windows — but it plays a sine wave, not your music.
-System audio is the next milestone and the tracking issue.
+**Endpoints matter.** Windows renders audio to one *endpoint* at a time — one of
+several output devices. Capture must open the same one your music plays to, or it
+records silence. `--list-endpoints` shows them; `--endpoint N` picks one. Note that
+a default endpoint can be a virtual/HDMI device that renders nothing at all.
 
 ## How it works
 
@@ -56,7 +59,17 @@ WinUSB, BTstack owns the HCI/L2CAP/AVDTP layers, and libldac does the encoding.
 
 4. Accept the pairing prompt on the headphones. Audio starts once AVDTP connects.
 
-Environment equivalents: `LDAC_ADDR`, `LDAC_MODE`.
+For **system audio** rather than the test tone:
+
+```powershell
+.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system --endpoint 3
+```
+
+List the candidates first with `--list-endpoints`. The endpoint must be the device
+your music actually plays to — capturing a different one yields silence, and a
+virtual/HDMI default endpoint may render nothing at all.
+
+Environment equivalents: `LDAC_ADDR`, `LDAC_MODE`, `LDAC_SOURCE`, `LDAC_GAIN`.
 
 ## Build from source
 
@@ -74,10 +87,11 @@ See [docs/SETUP.md](docs/SETUP.md) for the Windows-side build with MSYS2.
 ## Known limits
 
 - **One radio per machine.** The claimed radio is unavailable to Windows while running.
-- **No system audio yet** — test tone only (v0.1).
-- **Latency/quality trade-off at HQ.** The link sustains ~90 packets/s; the encoder's
+- **Endpoint must match your playback device** — capture listens to one endpoint only;
+  if it isn't the one your music renders to, you get silence.
+- **Latency/quality trade-off at HQ.** The link sustains ~80 packets/s; the encoder's
   refusals are absorbed by a hold-and-retry buffer rather than dropped, which is what
-  removed the crackle.
+  removed the crackle. ABR steps HQ→SQ→MQ if congestion persists.
 - Combo (Wi-Fi + BT) adapters work; a dedicated adapter is recommended.
 
 ## Licensing — read before you redistribute

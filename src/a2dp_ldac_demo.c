@@ -89,6 +89,7 @@ static int  g_gain_pct = 12;   // test-tone level, % of full scale (it is only a
 static int  g_source_system = 0;   // 1 = WASAPI loopback capture, 0 = test tone
 static int  g_endpoint_index = -1; // -1 = default render endpoint
 static int  g_abr_enabled = 0;
+static HANDLE_LDAC_ABR g_abr_handle = NULL;
 
 static void ldac_apply_mode(const char *m){
     if (!m) return;
@@ -300,8 +301,9 @@ static int ldac_encoder_init(void){
 
     // Adaptive bitrate: step HQ -> SQ -> MQ when the TX queue backs up, instead
     // of letting refusals turn into dropouts. Thresholds are in packets.
-    HANDLE_LDAC_ABR abr = ldac_ABR_get_handle();
-    if (abr && ldac_ABR_Init(abr, 100) == 0 && ldac_ABR_set_thresholds(abr, 8, 4, 2) == 0){
+    g_abr_handle = ldac_ABR_get_handle();
+    if (g_abr_handle && ldac_ABR_Init(g_abr_handle, 100) == 0 &&
+        ldac_ABR_set_thresholds(g_abr_handle, 8, 4, 2) == 0){
         g_abr_enabled = 1;
         printf("LDAC: ABR enabled (thresholds 8/4/2 packets)\n");
     }
@@ -624,7 +626,7 @@ static void a2dp_demo_audio_timeout_handler(btstack_timer_source_t * timer){
                                                                    ldac_pending_ts, ldac_pending, ldac_pending_len);
             if (g_abr_enabled){
                 unsigned int depth = (unsigned int)(owed / 128) + (ldac_pending_len ? 1u : 0u);
-                ldac_ABR_Proc(ldac_handle, ldac_ABR_get_handle(), depth, 1);
+                ldac_ABR_Proc(ldac_handle, g_abr_handle, depth, 1);
             }
             if (st != 0){ stat_refused++; break; }   // held for the next tick
             ldac_pending_len = 0;
