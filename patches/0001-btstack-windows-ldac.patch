@@ -11,7 +11,7 @@ index cce3948..562eb83 100644
  	a2dp_source_demo        \
  	avrcp_browsing_client   \
 diff --git a/port/windows-winusb/Makefile b/port/windows-winusb/Makefile
-index d9ffedb..6b825f1 100644
+index d9ffedb..8f54589 100644
 --- a/port/windows-winusb/Makefile
 +++ b/port/windows-winusb/Makefile
 @@ -1,10 +1,14 @@
@@ -24,9 +24,9 @@ index d9ffedb..6b825f1 100644
  COMMON  += hci_transport_h2_winusb.c btstack_run_loop_windows.c le_device_db_tlv.c btstack_link_key_db_tlv.c wav_util.c
  COMMON  += rijndael.c
 +# libldac (AOSP, Apache-2.0) for the LDAC encoder
-+COMMON  += ldacBT.c ldaclib.c
-+CFLAGS  += -I${BTSTACK_ROOT}/../libldac/inc
-+VPATH   += ${BTSTACK_ROOT}/../libldac/src
++COMMON  += ldacBT.c ldaclib.c ldacBT_abr.c wasapi_capture.c
++CFLAGS  += -I${BTSTACK_ROOT}/../libldac/inc -I${BTSTACK_ROOT}/../libldac/abr/inc
++VPATH   += ${BTSTACK_ROOT}/../libldac/src ${BTSTACK_ROOT}/../libldac/abr/src
  
  include ${BTSTACK_ROOT}/example/Makefile.inc
  

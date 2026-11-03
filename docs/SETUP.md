@@ -66,9 +66,38 @@ LDAC: encoder initialised, 990 kbps (HQ), target AC:80:0A:F2:C5:A2
 |---|---|
 | `--addr` | Target BD address (default: the XM4 used during development) |
 | `--mode` | `HQ` 990 kbps / `SQ` 660 / `MQ` 330 (default `HQ`) |
+| `--source` | `tone` (default, generated sine) or `system` (WASAPI loopback) |
+| `--endpoint N` | which render endpoint to capture (default: system default) |
+| `--list-endpoints` | prints active render endpoints as `[n] name`, then exits |
+| `--gain 0-100` | test-tone level in percent (default 12) — irrelevant for `system` |
 | `--help` | Usage |
 
-Env equivalents `LDAC_ADDR` / `LDAC_MODE`. Stop with Ctrl-C.
+## 5. Capturing real system audio
+
+Endpoints are Windows' individual output devices — "Speakers (Realtek)", "LG TV",
+"Headphones (Oculus Virtual)", etc. Windows renders to **one** at a time, so the
+capture has to open that same one.
+
+```powershell
+.\a2dp_source_demo.exe --list-endpoints
+[0] Speakers (Steam Streaming Microphone)
+[1] LG TV SSCR2 (NVIDIA High Definition Audio)
+[2] Headphones (Oculus Virtual Audio Device)
+[3] Realtek Digital Output (Realtek(R) Audio)
+
+.\a2dp_source_demo.exe --addr AC:80:0A:F2:C5:A2 --mode HQ --source system --endpoint 3
+```
+
+Start playback in any app, then run it. If you hear nothing:
+
+1. Confirm the endpoint index matches the device the app is actually using
+   (Windows Settings → System → Sound shows the active output).
+2. Beware **virtual or HDMI endpoints** — they can render nothing and loop back as
+   silence even though capture "works".
+3. Verify capture independently with `wa_test.exe selftest <n>`, which renders a tone
+   to that endpoint and captures it back (prints `LOOPBACK WORKS` or not).
+
+Env equivalents `LDAC_ADDR` / `LDAC_MODE` / `LDAC_SOURCE` / `LDAC_GAIN`. Stop with Ctrl-C.
 
 **Quality guidance:** HQ runs close to the link's limit; refusals are absorbed by a
 hold-and-retry buffer rather than dropped, but on a congested 2.4 GHz band `--mode SQ`

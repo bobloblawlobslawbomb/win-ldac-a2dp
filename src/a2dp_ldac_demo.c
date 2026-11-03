@@ -66,6 +66,9 @@
 #include <inttypes.h>
 
 #include "btstack.h"
+#include "ldacBT.h"
+#include "ldacBT_abr.h"
+#include "wasapi_capture.h"
 #include "hci_cmd.h"
 #include "ldacBT.h"
 #include "mods/mod.h"
@@ -83,6 +86,10 @@ static char g_target_addr[18] = "AC:80:0A:F2:C5:A2";
 static int  g_eqmid = LDACBT_EQMID_HQ;
 static const char *g_eqmid_name = "HQ";
 static int  g_gain_pct = 12;   // test-tone level, % of full scale (it is only a tone)
+static int  g_source_system = 0;   // 1 = WASAPI loopback capture, 0 = test tone
+static int  g_endpoint_index = -1; // -1 = default render endpoint
+static int  g_abr_enabled = 0;
+static HANDLE_LDAC_ABR g_abr_handle = NULL;
 
 static void ldac_apply_mode(const char *m){
     if (!m) return;
@@ -291,6 +298,15 @@ static int ldac_encoder_init(void){
                                        LDACBT_SMPL_FMT_S16, 48000);
     if (rc != 0) return -2;
     printf("LDAC: encoder initialised, %d kbps (%s), target %s, gain %d%%\n", ldacBT_get_bitrate(ldac_handle), g_eqmid_name, g_target_addr, g_gain_pct);
+
+    // Adaptive bitrate: step HQ -> SQ -> MQ when the TX queue backs up, instead
+    // of letting refusals turn into dropouts. Thresholds are in packets.
+    g_abr_handle = ldac_ABR_get_handle();
+    if (g_abr_handle && ldac_ABR_Init(g_abr_handle, 100) == 0 &&
+        ldac_ABR_set_thresholds(g_abr_handle, 8, 4, 2) == 0){
+        g_abr_enabled = 1;
+        printf("LDAC: ABR enabled (thresholds 8/4/2 packets)\n");
+    }
     return 0;
 }
 static a2dp_media_sending_context_t media_tracker;
@@ -457,6 +473,12 @@ static int a2dp_source_and_avrcp_services_init(void){
 /* LISTING_END */
 
 static void produce_audio(int16_t * pcm_buffer, int num_samples){
+    if (g_source_system){
+        // Loopback capture; returns silence if the endpoint is idle so the
+        // A2DP sink never times out.
+        wa_capture_read(pcm_buffer, num_samples);
+        return;
+    }
     btstack_audio_generator_generate(&audio_generator_state.generator.base, pcm_buffer, num_samples);
     if (g_gain_pct < 100){
         int n = num_samples * NUM_CHANNELS;
@@ -602,6 +624,10 @@ static void a2dp_demo_audio_timeout_handler(btstack_timer_source_t * timer){
             context->rtp_timestamp += (uint32_t)frame_num * 128;
             uint8_t st = a2dp_source_stream_send_media_payload_rtp(context->a2dp_cid, context->local_seid, 0,
                                                                    ldac_pending_ts, ldac_pending, ldac_pending_len);
+            if (g_abr_enabled){
+                unsigned int depth = (unsigned int)(owed / 128) + (ldac_pending_len ? 1u : 0u);
+                ldac_ABR_Proc(ldac_handle, g_abr_handle, depth, 1);
+            }
             if (st != 0){ stat_refused++; break; }   // held for the next tick
             ldac_pending_len = 0;
             sent_packets++;
@@ -1383,13 +1409,25 @@ int btstack_main(int argc, const char * argv[]){
             g_target_addr[sizeof(g_target_addr) - 1] = 0;
         } else if (!strcmp(argv[i], "--mode") && i + 1 < argc){
             ldac_apply_mode(argv[++i]);
+        } else if (!strcmp(argv[i], "--endpoint") && i + 1 < argc){
+            g_endpoint_index = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--list-endpoints")){
+            wa_capture_list();
+            exit(0);
+        } else if (!strcmp(argv[i], "--source") && i + 1 < argc){
+            const char *src = argv[++i];
+            if (!strcasecmp(src, "system")) g_source_system = 1;
+            else if (!strcasecmp(src, "tone")) g_source_system = 0;
+            else printf("Unknown source '%s' (tone|system)\n", src);
         } else if (!strcmp(argv[i], "--gain") && i + 1 < argc){
             int g = atoi(argv[++i]);
             g_gain_pct = (g < 0) ? 0 : (g > 100 ? 100 : g);
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")){
-            printf("Usage: a2dp_source_demo [--addr AA:BB:CC:DD:EE:FF] [--mode HQ|SQ|MQ] [--gain 0-100]\n");
+            printf("Usage: a2dp_source_demo [--addr AA:BB:CC:DD:EE:FF] [--mode HQ|SQ|MQ] [--gain 0-100] [--source tone|system]\n");
+            printf("  --source  tone = generated sine (default), system = WASAPI loopback\n");
+            printf("  --endpoint N  render endpoint to capture (see --list-endpoints)\n");
             printf("  --gain  test-tone level in percent (default 12)\n");
-            printf("  env: LDAC_ADDR, LDAC_MODE, LDAC_GAIN\n");
+            printf("  env: LDAC_ADDR, LDAC_MODE, LDAC_GAIN, LDAC_SOURCE\n");
             exit(0);
         } else {
             printf("Unknown argument '%s' (try --help)\n", argv[i]);
@@ -1397,9 +1435,16 @@ int btstack_main(int argc, const char * argv[]){
     }
     const char *e_addr = getenv("LDAC_ADDR"); if (e_addr && *e_addr) strncpy(g_target_addr, e_addr, sizeof(g_target_addr) - 1);
     ldac_apply_mode(getenv("LDAC_MODE"));
+    const char *e_src = getenv("LDAC_SOURCE");
+    if (e_src && *e_src) g_source_system = !strcasecmp(e_src, "system");
     const char *e_gain = getenv("LDAC_GAIN");
     if (e_gain && *e_gain){ int g = atoi(e_gain); g_gain_pct = (g < 0) ? 0 : (g > 100 ? 100 : g); }
     
+    if (g_source_system){
+        if (wa_capture_start_ex(g_endpoint_index) == 0) printf("AUDIO: capturing system audio (WASAPI loopback, endpoint %d)\n", g_endpoint_index);
+        else { printf("AUDIO: capture failed, falling back to test tone\n"); g_source_system = 0; }
+    }
+
     int err = a2dp_source_and_avrcp_services_init();
     if (err) return err;
 

@@ -62,6 +62,7 @@ fi
 
 # The example target for a *new* file does not get a link rule in this tree, so the
 # LDAC demo is built through the proven a2dp_source_demo target.
+cp "$REPO_ROOT/src/wasapi_capture.c" "$REPO_ROOT/src/wasapi_capture.h" example/
 cp "$REPO_ROOT/src/a2dp_ldac_demo.c" example/a2dp_ldac_demo.c
 cp "$REPO_ROOT/src/a2dp_ldac_demo.c" example/a2dp_source_demo.c
 
