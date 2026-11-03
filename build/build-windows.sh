@@ -99,7 +99,7 @@ cd "$WORK/btstack/port/windows-winusb"
 rm -f *.o *.exe
 make a2dp_source_demo \
     CC="$CROSS $EXTRA_CFLAGS" \
-    LDFLAGS="-lsetupapi -lwinusb -lwinmm"
+    LDFLAGS="-lsetupapi -lwinusb -lwinmm -lole32"
 
 cp a2dp_source_demo.exe "$DIST/"
 echo
