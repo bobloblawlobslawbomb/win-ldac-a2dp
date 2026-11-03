@@ -1,0 +1,122 @@
+diff --git a/example/Makefile.inc b/example/Makefile.inc
+index cce3948..562eb83 100644
+--- a/example/Makefile.inc
++++ b/example/Makefile.inc
+@@ -200,6 +200,7 @@ EXAMPLES_GENERAL =          \
+ # List of Examples that only use Bluetooth BR/EDR = Classic
+ 
+ EXAMPLES_CLASSIC_ONLY =     \
++	a2dp_ldac_demo          \
+ 	a2dp_sink_demo          \
+ 	a2dp_source_demo        \
+ 	avrcp_browsing_client   \
+diff --git a/port/windows-winusb/Makefile b/port/windows-winusb/Makefile
+index d9ffedb..6b825f1 100644
+--- a/port/windows-winusb/Makefile
++++ b/port/windows-winusb/Makefile
+@@ -1,10 +1,14 @@
+ # Makefile for windows WinUSB based examples
+ BTSTACK_ROOT ?= ../..
+ 
+-CORE += main.c btstack_stdin_windows.c btstack_tlv_windows.c hci_dump_windows_fs.c
++CORE += main.c btstack_tlv_windows.c hci_dump_windows_fs.c
+ 
+ COMMON  += hci_transport_h2_winusb.c btstack_run_loop_windows.c le_device_db_tlv.c btstack_link_key_db_tlv.c wav_util.c
+ COMMON  += rijndael.c
++# libldac (AOSP, Apache-2.0) for the LDAC encoder
++COMMON  += ldacBT.c ldaclib.c
++CFLAGS  += -I${BTSTACK_ROOT}/../libldac/inc
++VPATH   += ${BTSTACK_ROOT}/../libldac/src
+ 
+ include ${BTSTACK_ROOT}/example/Makefile.inc
+ 
+diff --git a/port/windows-winusb/btstack_config.h b/port/windows-winusb/btstack_config.h
+index 32db59d..08264e6 100644
+--- a/port/windows-winusb/btstack_config.h
++++ b/port/windows-winusb/btstack_config.h
+@@ -9,7 +9,7 @@
+ 
+ // Port related features
+ #define HAVE_ASSERT
+-#define HAVE_BTSTACK_STDIN
++//#define HAVE_BTSTACK_STDIN  // headless: the stdin thread exits on EOF and kills the stream
+ #define HAVE_MALLOC
+ #define HAVE_POSIX_FILE_IO
+ #define HAVE_POSIX_TIME
+@@ -21,7 +21,7 @@
+ #define ENABLE_CROSS_TRANSPORT_KEY_DERIVATION
+ #define ENABLE_GOEP_L2CAP
+ #define ENABLE_HFP_WIDE_BAND_SPEECH
+-#define ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE
++//#define ENABLE_L2CAP_ENHANCED_RETRANSMISSION_MODE  // A2DP media runs in basic mode; ERTM windows cap throughput
+ #define ENABLE_L2CAP_LE_CREDIT_BASED_FLOW_CONTROL_MODE
+ #define ENABLE_LE_CENTRAL
+ #define ENABLE_LE_DATA_LENGTH_EXTENSION
+diff --git a/port/windows-winusb/main.c b/port/windows-winusb/main.c
+index d828c40..9a144cc 100644
+--- a/port/windows-winusb/main.c
++++ b/port/windows-winusb/main.c
+@@ -60,6 +60,7 @@
+ #include "btstack_run_loop_windows.h"
+ #include "btstack_stdin.h"
+ #include "btstack_stdin_windows.h"
++#include <mmsystem.h>
+ #include "btstack_tlv_windows.h"
+ #include "classic/btstack_link_key_db_tlv.h"
+ #include "hal_led.h"
+@@ -103,8 +104,6 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
+         case HCI_STATE_OFF:
+             btstack_tlv_windows_deinit(&tlv_context);
+             if (!shutdown_triggered) break;
+-            // reset stdin
+-            btstack_stdin_reset();
+             log_info("Good bye, see you.\n");
+             exit(0);
+             break;
+@@ -113,7 +112,7 @@ static void packet_handler (uint8_t packet_type, uint16_t channel, uint8_t *pack
+     }
+ }
+ 
+-static void trigger_shutdown(void){
++static void __attribute__((unused)) trigger_shutdown(void){
+     printf("CTRL-C - SIGINT received, shutting down..\n");
+     log_info("sigint_handler: shutting down");
+     shutdown_triggered = true;
+@@ -128,6 +127,9 @@ void hal_led_toggle(void){
+ 
+ #define USB_MAX_PATH_LEN 7
+ int main(int argc, const char * argv[]){
++    // 1 ms timer resolution: the default 15.6 ms tick quantises the audio timer
++    // and caps media packets to ~62/s (measured 16.00 ms per packet).
++    timeBeginPeriod(1);
+ 
+     // Prevent stdout buffering
+     setvbuf(stdout, NULL, _IONBF, 0);
+@@ -157,9 +159,7 @@ int main(int argc, const char * argv[]){
+     hci_event_callback_registration.callback = &packet_handler;
+     hci_add_event_handler(&hci_event_callback_registration);
+ 
+-    // setup stdin to handle CTRL-c
+-    btstack_stdin_windows_init();
+-    btstack_stdin_window_register_ctrl_c_callback(&trigger_shutdown);
++    // headless: no stdin thread (EOF on a detached process would shut the stack down)
+ 
+     // setup app
+     btstack_main(argc, argv);
+diff --git a/src/hci.c b/src/hci.c
+index 33e3214..1fe6af8 100644
+--- a/src/hci.c
++++ b/src/hci.c
+@@ -6972,6 +6972,12 @@ static bool hci_whitelist_modification_process(void){
+ }
+ 
+ static bool hci_run_general_gap_le(void){
++    // BR/EDR-only controller (LMP feature bit 38 "LE Supported (Controller)" = 0):
++    // it silently ignores LE commands, which holds the single HCI command
++    // credit and blocks every later command (including Authentication
++    // Requested) forever. Never emit LE traffic on such a controller.
++    if ((hci_stack->local_supported_features[4] & 0x40u) == 0) return false;
++
+ 
+ #if defined(ENABLE_LE_EXTENDED_ADVERTISING) || defined(ENABLE_LE_WHITELIST_TOUCH_AFTER_RESOLVING_LIST_UPDATE)
+     btstack_linked_list_iterator_t lit;

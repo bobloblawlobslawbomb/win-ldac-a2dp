@@ -1,0 +1,17 @@
+# build artefacts
+.build/
+dist/
+*.o
+*.exe
+*.a
+*.dll
+
+# runtime state — link keys are per-machine secrets, never commit them
+btstack_*.tlv
+hci_dump.pklg
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
